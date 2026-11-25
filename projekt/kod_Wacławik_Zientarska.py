@@ -132,9 +132,3 @@ dane.info()
 
 # Przygotowany zbiór zawiera 7043 obserwacje i 26 kolumn: 25 zmiennych objaśniających oraz zmienną Churn.
 # Wszystkie zmienne są liczbowe i nie ma braków danych, więc zbiór jest gotowy do podziału na zbiór uczący i testowy.
-
-
-# EDA - Kasia
-# Podział na zbiór uczący i testowy
-# Opracowanie zmiennych katgorycznych
-
