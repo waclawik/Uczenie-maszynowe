@@ -132,3 +132,26 @@ dane.info()
 
 # Przygotowany zbiór zawiera 7043 obserwacje i 26 kolumn: 25 zmiennych objaśniających oraz zmienną Churn.
 # Wszystkie zmienne są liczbowe i nie ma braków danych, więc zbiór jest gotowy do podziału na zbiór uczący i testowy.
+
+X = dane.drop(columns="Churn")
+y = dane["Churn"]
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, stratify=y, random_state=42
+)
+X_train = X_train.copy()
+X_test = X_test.copy()
+
+print("\nZbiór uczący:", X_train.shape)
+print("Zbiór testowy:", X_test.shape)
+print("\nUdział klas w całym zbiorze:")
+print(y.value_counts(normalize=True).sort_index())
+print("\nUdział klas w zbiorze uczącym:")
+print(y_train.value_counts(normalize=True).sort_index())
+print("\nUdział klas w zbiorze testowym:")
+print(y_test.value_counts(normalize=True).sort_index())
+
+# Zbiór uczący zawiera 5634 obserwacje (80%), a testowy 1409 (20%), oba mają 25 zmiennych objaśniających.
+# Dzięki stratyfikacji udział klientów, którzy odeszli, wynosi ok. 26,5% we wszystkich zbiorach, więc zbiór testowy jest reprezentatywny. 
+# Klasy są niezrównoważone (odchodzi co czwarty klient, będę jeszcze o tym pisać w EDA :D), dlatego przy ocenie modeli oprócz dokładności trzeba uwzględnić czułość.
+
