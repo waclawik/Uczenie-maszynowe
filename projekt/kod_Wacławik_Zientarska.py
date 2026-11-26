@@ -9,7 +9,6 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
-from sklearn.metrics import confusion_matrix, f1_score, roc_auc_score
 
 data = pd.read_csv("Telco.csv")
 
