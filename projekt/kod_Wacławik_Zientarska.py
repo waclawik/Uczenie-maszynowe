@@ -2,6 +2,14 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedKFold, GridSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from sklearn.metrics import confusion_matrix, f1_score, roc_auc_score
 
 data = pd.read_csv("Telco.csv")
 
@@ -29,7 +37,7 @@ dane["TotalCharges"] = pd.to_numeric(dane["TotalCharges"], errors="coerce")
 # Po zamianie TotalCharges na typ liczbowy pojawiło się 11 braków danych.
 # W pliku były to puste wartości (spacje), więc isna() nie wykrywało ich na początku
 braki = dane.isna().sum()
-print(braki > 0)
+print(braki[braki > 0])
 
 print(dane.loc[dane["TotalCharges"].isna(), ["tenure", "MonthlyCharges", "TotalCharges"]])
 # Wszystkie 11 obserwacji ma tenure = 0, czyli są to nowi klienci, którzy nie zostali jeszcze obciążeni żadną opłatą.
@@ -37,12 +45,12 @@ print(dane.loc[dane["TotalCharges"].isna(), ["tenure", "MonthlyCharges", "TotalC
 dane["TotalCharges"] = dane["TotalCharges"].fillna(0)
 
 braki = dane.isna().sum()
-print(braki > 0)
+print(braki[braki > 0])
 # Po tej operacji w zbiorze nie ma braków danych.
 
 dane.info()
 
-# Weryfikacja wartości dostających
+# Weryfikacja wartości odstających
 kolumny_liczbowe = ["tenure", "MonthlyCharges", "TotalCharges"]
 
 fig, osie = plt.subplots(1, 3, figsize=(14, 4))
@@ -153,5 +161,42 @@ print(y_test.value_counts(normalize=True).sort_index())
 
 # Zbiór uczący zawiera 5634 obserwacje (80%), a testowy 1409 (20%), oba mają 25 zmiennych objaśniających.
 # Dzięki stratyfikacji udział klientów, którzy odeszli, wynosi ok. 26,5% we wszystkich zbiorach, więc zbiór testowy jest reprezentatywny. 
-# Klasy są niezrównoważone (odchodzi co czwarty klient, będę jeszcze o tym pisać w EDA :D), dlatego przy ocenie modeli oprócz dokładności trzeba uwzględnić czułość.
+# Klasy są niezrównoważone (odchodzi co czwarty klient), dlatego przy ocenie modeli oprócz dokładności trzeba uwzględnić czułość.
 
+# Walidacja krzyżowa
+wk = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+# Budowa modeli
+# Standaryzacja jedynie w regresji logistycznej i SVM, dopasowana jedynie do zbioru uczącego
+# zapis class_weight = "balanced" zapewnia większą wagę dla klasy mniejszościowej
+
+# Regresja logistyczna
+reg_log = Pipeline([
+    ("scaler", StandardScaler()),("model", LogisticRegression(class_weight="balanced", max_iter=10000)),
+])
+siatka_reg_log = GridSearchCV(reg_log, {"model__C": [0.001, 0.01, 0.1, 1, 10, 100]}, cv=wk, scoring="roc_auc", n_jobs=-1)
+siatka_reg_log.fit(X_train, y_train)
+print("Regresja logistyczna: ", siatka_reg_log.best_params_, siatka_reg_log.best_score_)
+
+# Drzewo decyzyjne
+drzewo_dec = DecisionTreeClassifier(class_weight="balanced", random_state=42)
+siatka_drzewo_dec = GridSearchCV(drzewo_dec, {"max_depth": [4, 6, 8, 10, 12, 15], "min_samples_leaf": [10, 25, 50, 100]},
+                                 cv=wk, scoring="roc_auc", n_jobs=-1)
+siatka_drzewo_dec.fit(X_train, y_train)
+print("Drzewo decyzyjne: ", siatka_drzewo_dec.best_params_, siatka_drzewo_dec.best_score_)
+
+# Las losowy
+las_losowy = RandomForestClassifier(n_estimators=300, class_weight="balanced", random_state=42, n_jobs=-1)
+siatka_las_losowy = GridSearchCV(las_losowy, {"max_depth": [6, 10, 15, None], "min_samples_leaf": [5, 25, 50]},
+                                 cv=wk, scoring="roc_auc", n_jobs=-1)
+siatka_las_losowy.fit(X_train, y_train)
+print("Las losowy: ", siatka_las_losowy.best_params_, siatka_las_losowy.best_score_)
+
+# SVM
+svm = Pipeline([("scaler", StandardScaler()), ("model", SVC(class_weight="balanced")),])
+siatka_svm = GridSearchCV(svm, [{"model__kernel": ["linear"], "model__C": [0.01, 0.1, 1]},
+                                {"model__kernel": ["rbf"], "model__C": [0.01, 0.1, 1],
+                                 "model__gamma": [0.0001, 0.001, 0.1, "scale"]}],
+                          cv=wk, scoring="roc_auc", n_jobs=-1)
+siatka_svm.fit(X_train, y_train)
+print("SVM: ", siatka_svm.best_params_, siatka_svm.best_score_)
