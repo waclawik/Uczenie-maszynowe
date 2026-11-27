@@ -1,16 +1,18 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
 from sklearn.model_selection import train_test_split
-from sklearn.model_selection import StratifiedKFold, GridSearchCV
+from sklearn.model_selection import StratifiedKFold, GridSearchCV, cross_validate
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
+from sklearn.metrics import confusion_matrix, recall_score, roc_auc_score, make_scorer, RocCurveDisplay
 
-data = pd.read_csv("Telco.csv")
+data = pd.read_csv("c:/Users/Kasia/Desktop/IiE/II stopień/Uczenie maszynowe/Uczenie maszynowe/Uczenie-maszynowe/projekt/Telco.csv")
 
 # Podstawowe informacje na temat danych
 print(data.head())
@@ -199,3 +201,132 @@ siatka_svm = GridSearchCV(svm, [{"model__kernel": ["linear"], "model__C": [0.01,
                           cv=wk, scoring="roc_auc", n_jobs=-1)
 siatka_svm.fit(X_train, y_train)
 print("SVM: ", siatka_svm.best_params_, siatka_svm.best_score_)
+
+
+# Analiza uzyskanych wyników - ocena jakoścu klasyfikacji
+
+# Funkcje pomocnicze
+MIARY = ["dokladnosc", "czulosc", "specyficznosc", "AUC"]
+ETYKIETY = ["Dokładność", "Czułość", "Specyficzność", "AUC"]
+
+def oblicz_miary(model, x_, y_):
+    y_ocena = model.predict_proba(x_)[:, 1] if hasattr(model, "predict_proba") else model.decision_function(x_)
+    tn, fp, fn, tp = confusion_matrix(y_, model.predict(x_), labels=[0,1]).ravel()
+    return {
+        "dokladnosc": (tp + tn) / (tn + fp + fn + tp),
+        "czulosc": tp / (tp + fn),
+        "specyficznosc": tn / (tn + fp),
+        "AUC": roc_auc_score(y_, y_ocena)
+    }
+
+def macierze_pomylek(model, tytul):
+    fig, osie = plt.subplots(1, 2, figsize=(9, 3.5))
+    for os_, (nazwa, X_, y_) in zip(osie, [("uczący", X_train, y_train), ("testowy", X_test, y_test)]):
+        sns.heatmap(confusion_matrix(y_, model.predict(X_)), annot=True, fmt="d", cmap="Blues", ax=os_,
+            xticklabels=["został", "odszedł"], yticklabels=["został", "odszedł"])
+        os_.set_title(f"Zbiór {nazwa}")
+        os_.set_xlabel("Przewidywana klasa")
+        os_.set_ylabel("Rzeczywista klasa")
+    fig.suptitle(tytul)
+    plt.tight_layout()
+    plt.show()
+
+# Modele z najlepszymi hiperparametrami
+modele = {
+    "Regresja logistyczna": siatka_reg_log.best_estimator_,
+    "Drzewo decyzyjne": siatka_drzewo_dec.best_estimator_,
+    "Las losowy": siatka_las_losowy.best_estimator_,
+    "SVM": siatka_svm.best_estimator_
+}
+
+miary_cv = {"dokladnosc": "accuracy", "czulosc": "recall", "specyficznosc": make_scorer(recall_score, pos_label=0), "AUC": "roc_auc"}
+
+# Dla każdego modelu: miary na zbiorze uczącym i testowym, macierze pomyłek i 5-krotna walidacja krzyżowa
+wiersze_test, wiersze_cv = {}, {}
+for nazwa, model in modele.items():
+    wyniki = pd.DataFrame({"uczący": oblicz_miary(model, X_train, y_train),
+                           "testowy": oblicz_miary(model, X_test, y_test)}).T
+    print(f"\n{nazwa}")
+    print(wyniki.round(3))
+    macierze_pomylek(model, nazwa)
+
+    wiersze_test[nazwa] = wyniki.loc["testowy"]
+    cv = cross_validate(model, X_train, y_train, cv=wk, scoring=miary_cv, n_jobs=-1)
+    wiersze_cv[nazwa] = {m: cv[f"test_{m}"].mean() for m in MIARY}
+
+# W zbiorze testowym jest 374 klientów, którzy odeszli i 1045, którzy zostali
+
+# Regresja logistyczna: na zbiorze testowym dokładność 0,74, czułość 0,775, specyficznośc 0,728 i AUC 0,837
+# Model nie wykrywa 84 z 374 odejść (22,5%), a 282 z 1035 klientów, którzy zostali (27,2%), błędnie wskazuje jako zagrożonych odejściem
+# Wyniki na zbiorze uczącym są tylko nieznacznie wyższe, więc model nie jest przeuczony
+
+# Drzewo decyzyjne: dokładność 0,751, czułość 0,797, specyficzność 0,734 i AUC 0,835
+# Pomija 76 odejść (20,3%) i daje 275 fałszywych alarmów (26,6%)
+# Różnica między zbiorem uczącym i testowym jest największa w czułości (0,831 vs 0,797) i AUC (0,865 vs 0,835), ale nadal niewielka
+
+# Las losowy: dokładność 0,760, czułość 0,797, specyficzność 0,747 i AUC 0,843
+# Pomija 76 odejść (20,3%) i daje najmniej fałszywych alarmow (262, czyli 25,3%)
+# Różnica AUC między zbiorem uczącym i testowym wynosi 0,029, więc przeuczenie jest niewielkie
+
+# SVM: dokładność 0,702, czułość 0,821, specyficzność 0,659 i AUC 0,835
+# Pomija najmniej odejść (67, czyli 17,9%), ale daje najwięcej fałszywych alarmów (353, czyli 34,1%)
+# Wyniki na obu zbiorach są niemal identyczne
+# Najlepsze jądro to rbf z małym gamma (0,001), czyli granica decyzyjna bliska liniowej
+
+# We wszystkich modelach czułość jest wyższa niż specyficzność
+
+
+# Porównanie modeli
+porownanie_test = pd.DataFrame(wiersze_test).T
+porownanie_cv = pd.DataFrame(wiersze_cv).T
+for df in (porownanie_test, porownanie_cv):
+    df["balanced_accuracy"] = (df["czulosc"] + df["specyficznosc"]) / 2
+
+print("Zbiór testowy:")
+print(porownanie_test.round(3).to_string())
+print("\nŚrednia z 5-krotnej walidacji krzyżowej (zbiór uczący):")
+print(porownanie_cv.round(3).to_string())
+
+# Wszystkie modele mają AUC ok. 0,83–0,85, zarówno na zbiorze testowym, jak i w walidacji krzyżowej, więc dobrze odróżniają klientów, którzy odejdą, od tych, którzy zostaną
+# Dokładność (0,70–0,75) jest zbliżona do dokładności modelu, który zawsze przewiduje „został” (0,735), ale taki model miałby czułość równą 0, a modele wykrywają ok. 78–82% odejść
+# Pokazuje to, że przy niezbalansowanych danych sama dokładność nie wystarcza do oceny modelu
+
+# Wyniki na zbiorze testowym i w walidacji krzyżowej są spójne
+# Las losowy ma najwyższe AUC w obu przypadkach (0,843 i 0,848)
+# Regresja logistyczna w walidacji krzyżowej wypada niewiele słabiej niż las losowy (AUC 0,845 vs 0,848, dokładność 0,748 vs 0,753)
+# Drzewo decyzyjne nieco słabiej (AUC 0,833, specyficzność 0,712)
+# SVM ma najwyższą czułość (0,835 w walidacji krzyżowej), ale wyraźnie najniższą specyficzność (0,659) i dokładność (0,706)
+
+
+fig, osie = plt.subplots(1, 2, figsize=(15, 4.5), sharey=True)
+for os_, (tytul, df) in zip(osie, [("Zbiór testowy", porownanie_test), ("Walidacja krzyżowa (5 części)", porownanie_cv)]):
+    df[MIARY].set_axis(ETYKIETY, axis=1).plot(kind="bar", ax=os_, rot=0)
+    os_.set_title(tytul)
+    os_.set_ylim(0, 1.15)
+    os_.legend(loc="upper center", ncol=4)
+    os_.grid(axis="y", alpha=0.3)
+plt.tight_layout()
+plt.show()
+
+# Krzywe ROC na zbiorze testowym
+fig, ax = plt.subplots(figsize=(7, 6))
+for nazwa, model in modele.items():
+    RocCurveDisplay.from_estimator(model, X_test, y_test, ax=ax, name=nazwa)
+ax.plot([0, 1], [0, 1], linestyle="--", color="grey", label="Klasyfikator losowy")
+ax.set_title("Krzywe ROC – zbiór testowy")
+ax.legend()
+plt.show()
+
+# Krzywe ROC pokazują czułość i odsetek fałszywych alarmów (1 - specyficzność) przy wszystkich możliwych progach odcięcia
+# Krzywe wszystkich modeli niemal się pokrywają i leżą wyraźnie powyżej przekątnej
+# Potwierdza to że modele mają bardzo podobną zdolność rozróżniania klas, a różnią się głównie położeniem progu odcięcia
+
+# Podsumowanie porównania modeli:
+# Las losowy ma najlepsze wyniki: najwyższe AUC i balanced accuracy zarówno na zbiorze testowym, jak i w walidacji krzyżowej, przy czułosci ok. 0,80 i specyficzności ok. 0,74-0,75.
+# Regresja logistyczna osiąga prawie takie same wyniki w walidacji krzyżowej
+# Drzewo decyzyjne wypada dobrze na zbiorze testowym, ale w walidacji krzyżowej nieco słabiej niż las losowy i regresja logistyczna
+# SVM wykrywa najwięcej odejść, ake kosztem największej liczby fałszywych alarmów
+
+# Różnice między modelami są niewielkie, więc wybór zależy od celu
+# Jako model końcowy można wybrac las losowy
+# Gdyby priorytetem było wykrycie jak największej liczby odchodzących klientów, można rozwazyć SVM
